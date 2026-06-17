@@ -145,7 +145,7 @@ def get_connection() -> Any:
     return connection
 
 
-def postgres_column_default(connection: Any, table_name: str, column_name: str) -> str | None:
+def postgres_column_default(connection: Any, table_name: str, column_name: str) -> tuple[bool, str | None]:
     row = connection.execute(
         """
         SELECT column_default
@@ -157,8 +157,8 @@ def postgres_column_default(connection: Any, table_name: str, column_name: str) 
         (table_name, column_name),
     ).fetchone()
     if not row:
-        return None
-    return row["column_default"]
+        return False, None
+    return True, row["column_default"]
 
 
 def next_form_answers_ids(connection: Any, count: int) -> list[int]:
@@ -709,8 +709,8 @@ def save_lead_submission(
 
             manual_id_required = False
             if USE_POSTGRES:
-                id_default = postgres_column_default(connection, "form_answers", "id")
-                manual_id_required = id_default is not None and not str(id_default).strip()
+                id_column_exists, id_default = postgres_column_default(connection, "form_answers", "id")
+                manual_id_required = id_column_exists and not str(id_default or "").strip()
 
             if manual_id_required:
                 manual_ids = next_form_answers_ids(connection, len(answer_rows))
