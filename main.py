@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,11 +31,22 @@ def resolve_db_path() -> Path:
     configured_db_path = os.getenv("DB_PATH")
     if configured_db_path:
         return Path(configured_db_path).expanduser()
-
-    if os.getenv("NETLIFY"):
+    if os.getenv("NETLIFY") or os.getenv("RENDER") or os.getenv("RAILWAY_ENVIRONMENT"):
         return Path("/tmp/puma-data-hub.db")
 
-    return BASE_DIR / "data.db"
+    default_db_path = BASE_DIR / "data.db"
+    parent_writable = os.access(default_db_path.parent, os.W_OK)
+    file_writable = not default_db_path.exists() or os.access(default_db_path, os.W_OK)
+    if parent_writable and file_writable:
+        return default_db_path
+
+    fallback_db_path = Path("/tmp/puma-data-hub.db")
+    if default_db_path.exists() and not fallback_db_path.exists():
+        try:
+            shutil.copy2(default_db_path, fallback_db_path)
+        except Exception:
+            pass
+    return fallback_db_path
 
 
 DB_PATH = resolve_db_path()
@@ -673,79 +685,87 @@ def save_lead_submission(
         user_agent,
         payload_json,
     )
-
-    with get_connection() as connection:
-        insert_submission_sql = f"""
-            INSERT INTO form_submissions (
-                source_site,
-                form_name,
-                full_name,
-                email,
-                phone,
-                company,
-                message,
-                submitted_at,
-                client_ip,
-                user_agent,
-                raw_payload
-            )
-            VALUES ({sql_placeholders(11)})
-        """
-        if USE_POSTGRES:
-            cursor = connection.execute(f"{insert_submission_sql} RETURNING id", params)
-            inserted = cursor.fetchone()
-            if not inserted:
-                raise HTTPException(status_code=500, detail="Errore salvataggio lead.")
-            submission_id = int(inserted["id"])
-        else:
-            cursor = connection.execute(insert_submission_sql, params)
-            submission_id = int(cursor.lastrowid)
-
-        if answer_entries:
-            answer_rows = [
-                (submission_id, source_site, question, answer, position)
-                for position, (question, answer) in enumerate(answer_entries, start=1)
-            ]
-
-            manual_id_required = False
-            if USE_POSTGRES:
-                id_column_exists, id_default = postgres_column_default(connection, "form_answers", "id")
-                manual_id_required = id_column_exists and not str(id_default or "").strip()
-
-            if manual_id_required:
-                manual_ids = next_form_answers_ids(connection, len(answer_rows))
-                insert_answers_sql = f"""
-                    INSERT INTO form_answers (
-                        id,
-                        submission_id,
-                        source_site,
-                        question_key,
-                        answer_value,
-                        position
-                    )
-                    VALUES ({sql_placeholders(6)})
-                """
-                connection.executemany(
-                    insert_answers_sql,
-                    [
-                        (manual_id, *row)
-                        for manual_id, row in zip(manual_ids, answer_rows)
-                    ],
+    try:
+        with get_connection() as connection:
+            insert_submission_sql = f"""
+                INSERT INTO form_submissions (
+                    source_site,
+                    form_name,
+                    full_name,
+                    email,
+                    phone,
+                    company,
+                    message,
+                    submitted_at,
+                    client_ip,
+                    user_agent,
+                    raw_payload
                 )
+                VALUES ({sql_placeholders(11)})
+            """
+            if USE_POSTGRES:
+                cursor = connection.execute(f"{insert_submission_sql} RETURNING id", params)
+                inserted = cursor.fetchone()
+                if not inserted:
+                    raise HTTPException(status_code=500, detail="Errore salvataggio lead.")
+                submission_id = int(inserted["id"])
             else:
-                insert_answers_sql = f"""
-                    INSERT INTO form_answers (
-                        submission_id,
-                        source_site,
-                        question_key,
-                        answer_value,
-                        position
-                    )
-                    VALUES ({sql_placeholders(5)})
-                """
-                connection.executemany(insert_answers_sql, answer_rows)
+                cursor = connection.execute(insert_submission_sql, params)
+                submission_id = int(cursor.lastrowid)
 
-        connection.commit()
+            if answer_entries:
+                answer_rows = [
+                    (submission_id, source_site, question, answer, position)
+                    for position, (question, answer) in enumerate(answer_entries, start=1)
+                ]
+
+                manual_id_required = False
+                if USE_POSTGRES:
+                    id_column_exists, id_default = postgres_column_default(connection, "form_answers", "id")
+                    manual_id_required = id_column_exists and not str(id_default or "").strip()
+
+                if manual_id_required:
+                    manual_ids = next_form_answers_ids(connection, len(answer_rows))
+                    insert_answers_sql = f"""
+                        INSERT INTO form_answers (
+                            id,
+                            submission_id,
+                            source_site,
+                            question_key,
+                            answer_value,
+                            position
+                        )
+                        VALUES ({sql_placeholders(6)})
+                    """
+                    connection.executemany(
+                        insert_answers_sql,
+                        [
+                            (manual_id, *row)
+                            for manual_id, row in zip(manual_ids, answer_rows)
+                        ],
+                    )
+                else:
+                    insert_answers_sql = f"""
+                        INSERT INTO form_answers (
+                            submission_id,
+                            source_site,
+                            question_key,
+                            answer_value,
+                            position
+                        )
+                        VALUES ({sql_placeholders(5)})
+                    """
+                    connection.executemany(insert_answers_sql, answer_rows)
+
+            connection.commit()
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        if "readonly" in message or "read-only" in message:
+            raise HTTPException(
+                status_code=503,
+                detail="Storage non scrivibile in questo runtime. Configura DATABASE_URL (PostgreSQL) o DB_PATH in una directory scrivibile.",
+            ) from exc
+        raise HTTPException(status_code=500, detail="Errore database durante il salvataggio lead.") from exc
 
     return submission_id, submitted_at, len(answer_entries)
 
