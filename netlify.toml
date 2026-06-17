@@ -3,7 +3,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://puma-data-hub.onrender.com/api/:splat"
+  to = "/.netlify/functions/api/api/:splat"
   status = 200
   force = true
 
