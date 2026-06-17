@@ -144,6 +144,32 @@ def get_connection() -> Any:
     connection.execute("PRAGMA foreign_keys = ON;")
     return connection
 
+
+def postgres_column_default(connection: Any, table_name: str, column_name: str) -> str | None:
+    row = connection.execute(
+        """
+        SELECT column_default
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = %s
+          AND column_name = %s
+        """,
+        (table_name, column_name),
+    ).fetchone()
+    if not row:
+        return None
+    return row["column_default"]
+
+
+def next_form_answers_ids(connection: Any, count: int) -> list[int]:
+    if count <= 0:
+        return []
+    connection.execute("LOCK TABLE form_answers IN EXCLUSIVE MODE")
+    row = connection.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM form_answers").fetchone()
+    start = int(row["max_id"]) + 1
+    return list(range(start, start + count))
+
+
 def schema_statements() -> list[str]:
     if USE_POSTGRES:
         return [
@@ -676,23 +702,48 @@ def save_lead_submission(
             submission_id = int(cursor.lastrowid)
 
         if answer_entries:
-            insert_answers_sql = f"""
-                INSERT INTO form_answers (
-                    submission_id,
-                    source_site,
-                    question_key,
-                    answer_value,
-                    position
+            answer_rows = [
+                (submission_id, source_site, question, answer, position)
+                for position, (question, answer) in enumerate(answer_entries, start=1)
+            ]
+
+            manual_id_required = False
+            if USE_POSTGRES:
+                id_default = postgres_column_default(connection, "form_answers", "id")
+                manual_id_required = id_default is not None and not str(id_default).strip()
+
+            if manual_id_required:
+                manual_ids = next_form_answers_ids(connection, len(answer_rows))
+                insert_answers_sql = f"""
+                    INSERT INTO form_answers (
+                        id,
+                        submission_id,
+                        source_site,
+                        question_key,
+                        answer_value,
+                        position
+                    )
+                    VALUES ({sql_placeholders(6)})
+                """
+                connection.executemany(
+                    insert_answers_sql,
+                    [
+                        (manual_id, *row)
+                        for manual_id, row in zip(manual_ids, answer_rows)
+                    ],
                 )
-                VALUES ({sql_placeholders(5)})
-            """
-            connection.executemany(
-                insert_answers_sql,
-                [
-                    (submission_id, source_site, question, answer, position)
-                    for position, (question, answer) in enumerate(answer_entries, start=1)
-                ],
-            )
+            else:
+                insert_answers_sql = f"""
+                    INSERT INTO form_answers (
+                        submission_id,
+                        source_site,
+                        question_key,
+                        answer_value,
+                        position
+                    )
+                    VALUES ({sql_placeholders(5)})
+                """
+                connection.executemany(insert_answers_sql, answer_rows)
 
         connection.commit()
 
