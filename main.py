@@ -672,6 +672,7 @@ def save_lead_submission(
 ) -> tuple[int, str, int]:
     submitted_at = utc_now_iso()
     payload_json = json.dumps(raw_payload, ensure_ascii=False)
+    saved_answer_count = 0
     params = (
         source_site,
         lead_fields["form_name"],
@@ -712,39 +713,16 @@ def save_lead_submission(
             else:
                 cursor = connection.execute(insert_submission_sql, params)
                 submission_id = int(cursor.lastrowid)
+            # Non bloccare mai il flusso dei form: salviamo prima la submission principale.
+            connection.commit()
 
             if answer_entries:
                 answer_rows = [
                     (submission_id, source_site, question, answer, position)
                     for position, (question, answer) in enumerate(answer_entries, start=1)
                 ]
-
-                manual_id_required = False
-                if USE_POSTGRES:
-                    id_column_exists, id_default = postgres_column_default(connection, "form_answers", "id")
-                    manual_id_required = id_column_exists and not str(id_default or "").strip()
-
-                if manual_id_required:
-                    manual_ids = next_form_answers_ids(connection, len(answer_rows))
-                    insert_answers_sql = f"""
-                        INSERT INTO form_answers (
-                            id,
-                            submission_id,
-                            source_site,
-                            question_key,
-                            answer_value,
-                            position
-                        )
-                        VALUES ({sql_placeholders(6)})
-                    """
-                    connection.executemany(
-                        insert_answers_sql,
-                        [
-                            (manual_id, *row)
-                            for manual_id, row in zip(manual_ids, answer_rows)
-                        ],
-                    )
-                else:
+                # Tentativo standard.
+                try:
                     insert_answers_sql = f"""
                         INSERT INTO form_answers (
                             submission_id,
@@ -756,8 +734,37 @@ def save_lead_submission(
                         VALUES ({sql_placeholders(5)})
                     """
                     connection.executemany(insert_answers_sql, answer_rows)
-
-            connection.commit()
+                    connection.commit()
+                    saved_answer_count = len(answer_rows)
+                except Exception:
+                    connection.rollback()
+                    # Fallback PostgreSQL per schemi legacy dove `id` non ha default/sequence.
+                    if USE_POSTGRES:
+                        try:
+                            manual_ids = next_form_answers_ids(connection, len(answer_rows))
+                            insert_answers_with_id_sql = f"""
+                                INSERT INTO form_answers (
+                                    id,
+                                    submission_id,
+                                    source_site,
+                                    question_key,
+                                    answer_value,
+                                    position
+                                )
+                                VALUES ({sql_placeholders(6)})
+                            """
+                            connection.executemany(
+                                insert_answers_with_id_sql,
+                                [
+                                    (manual_id, *row)
+                                    for manual_id, row in zip(manual_ids, answer_rows)
+                                ],
+                            )
+                            connection.commit()
+                            saved_answer_count = len(answer_rows)
+                        except Exception:
+                            # Manteniamo comunque la submission principale già salvata.
+                            connection.rollback()
     except sqlite3.OperationalError as exc:
         message = str(exc).lower()
         if "readonly" in message or "read-only" in message:
@@ -766,8 +773,7 @@ def save_lead_submission(
                 detail="Storage non scrivibile in questo runtime. Configura DATABASE_URL (PostgreSQL) o DB_PATH in una directory scrivibile.",
             ) from exc
         raise HTTPException(status_code=500, detail="Errore database durante il salvataggio lead.") from exc
-
-    return submission_id, submitted_at, len(answer_entries)
+    return submission_id, submitted_at, saved_answer_count
 
 
 def query_leads(source_site: str | None, limit: int) -> list[dict[str, Any]]:
