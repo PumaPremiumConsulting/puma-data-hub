@@ -662,6 +662,23 @@ def extract_answer_entries(payload: dict[str, Any]) -> list[tuple[str, str]]:
     return entries
 
 
+def parse_raw_payload_dict(raw_payload: Any) -> dict[str, Any]:
+    if isinstance(raw_payload, dict):
+        return raw_payload
+    if not isinstance(raw_payload, str):
+        return {}
+    text = raw_payload.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
 def save_lead_submission(
     source_site: str,
     lead_fields: dict[str, str | None],
@@ -790,7 +807,8 @@ def query_leads(source_site: str | None, limit: int) -> list[dict[str, Any]]:
                     phone,
                     company,
                     message,
-                    submitted_at
+                    submitted_at,
+                    raw_payload
                 FROM form_submissions
                 WHERE source_site = {sql_placeholder()}
                 ORDER BY id DESC
@@ -811,7 +829,8 @@ def query_leads(source_site: str | None, limit: int) -> list[dict[str, Any]]:
                     phone,
                     company,
                     message,
-                    submitted_at
+                    submitted_at,
+                    raw_payload
                 FROM form_submissions
                 ORDER BY id DESC
                 LIMIT {sql_placeholder()}
@@ -855,6 +874,18 @@ def query_leads(source_site: str | None, limit: int) -> list[dict[str, Any]]:
     for row in submission_rows:
         item = dict(row)
         answers = grouped_answers.get(int(row["id"]), [])
+        if not answers:
+            raw_payload = parse_raw_payload_dict(item.get("raw_payload"))
+            fallback_entries = extract_answer_entries(raw_payload)
+            answers = [
+                {
+                    "question_key": question,
+                    "answer_value": answer,
+                    "position": position,
+                }
+                for position, (question, answer) in enumerate(fallback_entries, start=1)
+            ]
+        item.pop("raw_payload", None)
         item["answers"] = answers
         item["answer_count"] = len(answers)
         items.append(item)
