@@ -15,9 +15,6 @@ const kpiLast24h = document.getElementById("kpiLast24h");
 const kpiLastSubmitted = document.getElementById("kpiLastSubmitted");
 const topFormsList = document.getElementById("topFormsList");
 
-const leadForm = document.getElementById("leadForm");
-const leadSource = document.getElementById("leadSource");
-
 let cachedLeads = [];
 let searchDebounceTimer = null;
 
@@ -156,43 +153,18 @@ function renderLeads(items) {
   }
 }
 
-function formDataToPayload(formElement) {
-  const formData = new FormData(formElement);
-  const payload = {};
-  for (const [key, rawValue] of formData.entries()) {
-    const value = String(rawValue ?? "").trim();
-    if (!value) continue;
-    if (payload[key] === undefined) {
-      payload[key] = value;
-      continue;
-    }
-    if (Array.isArray(payload[key])) {
-      payload[key].push(value);
-      continue;
-    }
-    payload[key] = [payload[key], value];
-  }
-  return payload;
-}
 
 async function loadSources() {
   const data = await getJson("/api/sources");
   const selectedSource = sourceFilter.value;
-  const selectedLeadSource = leadSource.value;
   sourceFilter.innerHTML = '<option value="">Tutte</option>';
-  leadSource.innerHTML = "";
   for (const source of data.sources || []) {
     const filterOption = document.createElement("option");
     filterOption.value = source;
     filterOption.textContent = source;
     sourceFilter.appendChild(filterOption);
-    const leadOption = document.createElement("option");
-    leadOption.value = source;
-    leadOption.textContent = source;
-    leadSource.appendChild(leadOption);
   }
   sourceFilter.value = selectedSource || "";
-  leadSource.value = selectedLeadSource || data.sources?.[0] || "";
 }
 
 async function loadDashboardStats() {
@@ -287,26 +259,6 @@ async function clearFiltersAndReload() {
   await refreshDashboard("Filtri resettati.");
 }
 
-async function submitTestLead(event) {
-  event.preventDefault();
-  setStatus("Invio lead di test...", "info");
-  const selectedSource = leadSource.value;
-  const payload = formDataToPayload(leadForm);
-  payload.source_site = selectedSource;
-  payload.form_name = "manual-test-dashboard";
-  try {
-    const result = await getJson("/api/leads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    leadForm.reset();
-    leadSource.value = selectedSource;
-    await refreshDashboard(`Lead test salvata (${result.answer_count} risposte).`);
-  } catch (error) {
-    setStatus(`Errore invio lead: ${error.message}`, "error");
-  }
-}
 
 async function initialize() {
   setStatus("Caricamento dashboard...", "info");
@@ -352,6 +304,5 @@ clearFiltersButton.addEventListener("click", () => {
 });
 
 exportCsvButton.addEventListener("click", exportCurrentLeadsToCsv);
-leadForm.addEventListener("submit", submitTestLead);
 
 initialize().catch((error) => setStatus(`Errore avvio: ${error.message}`, "error"));

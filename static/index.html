@@ -81,65 +81,6 @@
         <div id="summaryGrid" class="summary-grid"></div>
       </section>
 
-      <section class="card">
-        <h2>Invio test lead</h2>
-        <p class="meta">
-          Questa sezione serve solo per test locale. I form reali dei due siti
-          dovranno inviare i dati a <code>POST /api/leads</code>.
-        </p>
-        <form id="leadForm" class="lead-form">
-          <label>
-            Sorgente
-            <select id="leadSource" required></select>
-          </label>
-          <label>
-            Nome cliente
-            <input id="leadName" name="name" type="text" placeholder="Mario Rossi" />
-          </label>
-          <label>
-            Email
-            <input id="leadEmail" name="email" type="email" placeholder="mario@email.it" />
-          </label>
-          <label>
-            Telefono
-            <input id="leadPhone" name="phone" type="text" placeholder="+39 333 0000000" />
-          </label>
-          <label>
-            Azienda
-            <input id="leadCompany" name="company" type="text" placeholder="Azienda Srl" />
-          </label>
-          <label class="full">
-            Messaggio
-            <textarea id="leadMessage" name="message" rows="3" placeholder="Richiesta cliente"></textarea>
-          </label>
-          <label>
-            Maturità operativa (preimpostata)
-            <select id="leadOperationalTier" name="operational_tier">
-              <option value="">Seleziona</option>
-              <option value="Reactive">Reactive</option>
-              <option value="Managed">Managed</option>
-              <option value="Optimized">Optimized</option>
-              <option value="Enterprise OS">Enterprise OS</option>
-            </select>
-          </label>
-          <fieldset class="radio-group">
-            <legend>Urgenza (preimpostata)</legend>
-            <label><input type="radio" name="urgency" value="Bassa" /> Bassa</label>
-            <label><input type="radio" name="urgency" value="Media" /> Media</label>
-            <label><input type="radio" name="urgency" value="Alta" /> Alta</label>
-          </fieldset>
-          <fieldset class="full checkbox-group">
-            <legend>Aree critiche (checkbox multipli)</legend>
-            <label><input type="checkbox" name="pain_points" value="Processi manuali" /> Processi manuali</label>
-            <label><input type="checkbox" name="pain_points" value="Decisioni senza dati" /> Decisioni senza dati</label>
-            <label><input type="checkbox" name="pain_points" value="Silos operativi" /> Silos operativi</label>
-            <label><input type="checkbox" name="pain_points" value="Scalabilità bloccata" /> Scalabilità bloccata</label>
-          </fieldset>
-          <div class="full">
-            <button id="submitLeadButton" type="submit">Invia lead test</button>
-          </div>
-        </form>
-      </section>
 
       <section class="card">
         <h2>Lead ricevute</h2>
