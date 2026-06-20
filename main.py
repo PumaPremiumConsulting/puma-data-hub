@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -118,7 +118,7 @@ PAIR_COLLECTION_KEYS = {
     "assessment_responses",
 }
 
-app = FastAPI(title="Puma Lead Hub", version="2.1.0")
+app = FastAPI(title="Puma Lead Hub", version="2.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -286,6 +286,76 @@ def init_db() -> None:
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+def normalize_iso_datetime_filter(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"{field_name} non è una data ISO valida.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.replace(microsecond=0).isoformat()
+
+
+def validate_submitted_at_range(submitted_from: str | None, submitted_to: str | None) -> None:
+    if submitted_from and submitted_to and submitted_from > submitted_to:
+        raise HTTPException(status_code=422, detail="submitted_from deve essere precedente a submitted_to.")
+
+
+def normalize_search_term(search: str | None) -> str | None:
+    if search is None:
+        return None
+    normalized = " ".join(str(search).strip().split())
+    return normalized or None
+
+
+def build_submission_filters(
+    source_site: str | None,
+    search: str | None,
+    submitted_from: str | None,
+    submitted_to: str | None,
+    table_alias: str | None = None,
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    prefix = f"{table_alias}." if table_alias else ""
+
+    if source_site:
+        source = normalize_source_site(source_site)
+        clauses.append(f"{prefix}source_site = {sql_placeholder()}")
+        params.append(source)
+
+    search_term = normalize_search_term(search)
+    if search_term:
+        pattern = f"%{search_term.lower()}%"
+        placeholder = sql_placeholder()
+        clauses.append(
+            "("
+            f"LOWER(COALESCE({prefix}full_name, '')) LIKE {placeholder} OR "
+            f"LOWER(COALESCE({prefix}email, '')) LIKE {placeholder} OR "
+            f"LOWER(COALESCE({prefix}company, '')) LIKE {placeholder} OR "
+            f"LOWER(COALESCE({prefix}message, '')) LIKE {placeholder}"
+            ")"
+        )
+        params.extend([pattern, pattern, pattern, pattern])
+
+    if submitted_from:
+        clauses.append(f"{prefix}submitted_at >= {sql_placeholder()}")
+        params.append(submitted_from)
+
+    if submitted_to:
+        clauses.append(f"{prefix}submitted_at <= {sql_placeholder()}")
+        params.append(submitted_to)
+
+    where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where_clause, params
 
 
 def normalize_source_site(source_site: Any) -> str:
@@ -793,55 +863,51 @@ def save_lead_submission(
     return submission_id, submitted_at, saved_answer_count
 
 
-def query_leads(source_site: str | None, limit: int) -> list[dict[str, Any]]:
+def query_leads(
+    source_site: str | None,
+    limit: int,
+    offset: int,
+    search: str | None,
+    submitted_from: str | None,
+    submitted_to: str | None,
+) -> tuple[list[dict[str, Any]], int]:
     with get_connection() as connection:
-        if source_site:
-            source = normalize_source_site(source_site)
-            limit_with_source_sql = f"""
-                SELECT
-                    id,
-                    source_site,
-                    form_name,
-                    full_name,
-                    email,
-                    phone,
-                    company,
-                    message,
-                    submitted_at,
-                    raw_payload
-                FROM form_submissions
-                WHERE source_site = {sql_placeholder()}
-                ORDER BY id DESC
-                LIMIT {sql_placeholder()}
-            """
-            submission_rows = connection.execute(
-                limit_with_source_sql,
-                (source, limit),
-            ).fetchall()
-        else:
-            limit_all_sql = f"""
-                SELECT
-                    id,
-                    source_site,
-                    form_name,
-                    full_name,
-                    email,
-                    phone,
-                    company,
-                    message,
-                    submitted_at,
-                    raw_payload
-                FROM form_submissions
-                ORDER BY id DESC
-                LIMIT {sql_placeholder()}
-            """
-            submission_rows = connection.execute(
-                limit_all_sql,
-                (limit,),
-            ).fetchall()
+        where_clause, params = build_submission_filters(
+            source_site=source_site,
+            search=search,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+        )
+        count_sql = f"""
+            SELECT COUNT(*) AS total_count
+            FROM form_submissions
+            {where_clause}
+        """
+        count_row = connection.execute(count_sql, tuple(params)).fetchone()
+        total_count = int(count_row["total_count"]) if count_row else 0
+        list_sql = f"""
+            SELECT
+                id,
+                source_site,
+                form_name,
+                full_name,
+                email,
+                phone,
+                company,
+                message,
+                submitted_at,
+                raw_payload
+            FROM form_submissions
+            {where_clause}
+            ORDER BY id DESC
+            LIMIT {sql_placeholder()}
+            OFFSET {sql_placeholder()}
+        """
+        list_params = [*params, limit, offset]
+        submission_rows = connection.execute(list_sql, tuple(list_params)).fetchall()
 
         if not submission_rows:
-            return []
+            return [], total_count
 
         submission_ids = [int(row["id"]) for row in submission_rows]
         placeholders = sql_placeholders(len(submission_ids))
@@ -889,21 +955,34 @@ def query_leads(source_site: str | None, limit: int) -> list[dict[str, Any]]:
         item["answers"] = answers
         item["answer_count"] = len(answers)
         items.append(item)
-    return items
+    return items, total_count
 
 
-def query_lead_summary() -> list[dict[str, Any]]:
+def query_lead_summary(
+    source_site: str | None,
+    search: str | None,
+    submitted_from: str | None,
+    submitted_to: str | None,
+) -> list[dict[str, Any]]:
     with get_connection() as connection:
+        where_clause, params = build_submission_filters(
+            source_site=source_site,
+            search=search,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+        )
         rows = connection.execute(
-            """
+            f"""
             SELECT
                 source_site,
                 COUNT(*) AS total_leads,
                 MAX(submitted_at) AS last_submitted_at
             FROM form_submissions
+            {where_clause}
             GROUP BY source_site
             ORDER BY source_site
-            """
+            """,
+            tuple(params),
         ).fetchall()
 
     summary_by_source = {row["source_site"]: dict(row) for row in rows}
@@ -922,6 +1001,66 @@ def query_lead_summary() -> list[dict[str, Any]]:
             )
     return output
 
+
+def query_dashboard_stats(
+    source_site: str | None,
+    search: str | None,
+    submitted_from: str | None,
+    submitted_to: str | None,
+) -> dict[str, Any]:
+    with get_connection() as connection:
+        where_clause, params = build_submission_filters(
+            source_site=source_site,
+            search=search,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+        )
+        totals_row = connection.execute(
+            f"""
+            SELECT
+                COUNT(*) AS total_leads,
+                MAX(submitted_at) AS last_submitted_at
+            FROM form_submissions
+            {where_clause}
+            """,
+            tuple(params),
+        ).fetchone()
+        recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).replace(microsecond=0).isoformat()
+        recent_where = f"{where_clause} AND submitted_at >= {sql_placeholder()}" if where_clause else f"WHERE submitted_at >= {sql_placeholder()}"
+        recent_row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS leads_last_24h
+            FROM form_submissions
+            {recent_where}
+            """,
+            tuple([*params, recent_cutoff]),
+        ).fetchone()
+        top_forms_rows = connection.execute(
+            f"""
+            SELECT
+                COALESCE(NULLIF(TRIM(form_name), ''), 'unspecified') AS form_name,
+                COUNT(*) AS total_leads
+            FROM form_submissions
+            {where_clause}
+            GROUP BY COALESCE(NULLIF(TRIM(form_name), ''), 'unspecified')
+            ORDER BY total_leads DESC, form_name ASC
+            LIMIT {sql_placeholder()}
+            """,
+            tuple([*params, 5]),
+        ).fetchall()
+
+    return {
+        "total_leads": int((totals_row["total_leads"] if totals_row else 0) or 0),
+        "last_submitted_at": totals_row["last_submitted_at"] if totals_row else None,
+        "leads_last_24h": int((recent_row["leads_last_24h"] if recent_row else 0) or 0),
+        "top_forms": [dict(row) for row in top_forms_rows],
+        "summary": query_lead_summary(
+            source_site=source_site,
+            search=search,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+        ),
+    }
 
 @app.on_event("startup")
 def on_startup() -> None:
@@ -999,12 +1138,61 @@ async def receive_lead(request: Request) -> dict[str, Any]:
 @app.get("/api/leads")
 def leads(
     source_site: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    submitted_from: str | None = Query(default=None),
+    submitted_to: str | None = Query(default=None),
     limit: int = Query(default=300, ge=1, le=3000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    items = query_leads(source_site=source_site, limit=limit)
-    return {"count": len(items), "items": items}
+    normalized_submitted_from = normalize_iso_datetime_filter(submitted_from, "submitted_from")
+    normalized_submitted_to = normalize_iso_datetime_filter(submitted_to, "submitted_to")
+    validate_submitted_at_range(normalized_submitted_from, normalized_submitted_to)
+    items, total_count = query_leads(
+        source_site=source_site,
+        limit=limit,
+        offset=offset,
+        search=search,
+        submitted_from=normalized_submitted_from,
+        submitted_to=normalized_submitted_to,
+    )
+    return {"count": len(items), "total_count": total_count, "items": items}
 
 
 @app.get("/api/lead-summary")
-def lead_summary() -> dict[str, Any]:
-    return {"summary": query_lead_summary()}
+def lead_summary(
+    source_site: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    submitted_from: str | None = Query(default=None),
+    submitted_to: str | None = Query(default=None),
+) -> dict[str, Any]:
+    normalized_submitted_from = normalize_iso_datetime_filter(submitted_from, "submitted_from")
+    normalized_submitted_to = normalize_iso_datetime_filter(submitted_to, "submitted_to")
+    validate_submitted_at_range(normalized_submitted_from, normalized_submitted_to)
+    return {
+        "summary": query_lead_summary(
+            source_site=source_site,
+            search=search,
+            submitted_from=normalized_submitted_from,
+            submitted_to=normalized_submitted_to,
+        )
+    }
+
+
+@app.get("/api/dashboard-stats")
+def dashboard_stats(
+    source_site: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    submitted_from: str | None = Query(default=None),
+    submitted_to: str | None = Query(default=None),
+) -> dict[str, Any]:
+    normalized_submitted_from = normalize_iso_datetime_filter(submitted_from, "submitted_from")
+    normalized_submitted_to = normalize_iso_datetime_filter(submitted_to, "submitted_to")
+    validate_submitted_at_range(normalized_submitted_from, normalized_submitted_to)
+    return {
+        "stats": query_dashboard_stats(
+            source_site=source_site,
+            search=search,
+            submitted_from=normalized_submitted_from,
+            submitted_to=normalized_submitted_to,
+        )
+    }

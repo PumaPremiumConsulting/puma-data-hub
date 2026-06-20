@@ -43,12 +43,24 @@ body {
   display: grid;
   gap: 10px;
 }
+.control-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
 
 .control-row {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: #2d3a54;
 }
 
 select,
@@ -74,6 +86,11 @@ button.secondary {
   background: #fff;
   color: #0a65ff;
 }
+button.ghost {
+  background: #f4f7ff;
+  color: #35589f;
+  border-color: #d5def2;
+}
 
 .status {
   margin: 0;
@@ -87,6 +104,68 @@ button.secondary {
 
 .status.error {
   color: #b31d2c;
+}
+.status.warn {
+  color: #8e5b12;
+}
+
+.kpi-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.kpi-card {
+  border: 1px solid #d9e1ef;
+  border-radius: 10px;
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+}
+
+.kpi-card h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #4a5b7a;
+}
+
+.kpi-value {
+  margin: 8px 0 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #0a65ff;
+}
+
+.kpi-value.kpi-small {
+  font-size: 16px;
+  color: #172033;
+}
+
+.top-forms {
+  margin-top: 14px;
+}
+
+.top-forms h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.top-forms ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.top-forms li {
+  border: 1px solid #d9e1ef;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  background: #fbfcff;
 }
 
 .summary-grid {

@@ -65,9 +65,17 @@ Conclusione pratica: in produzione usa sempre PostgreSQL persistente sul backend
 
 ## Endpoint
 - `POST /api/leads` → salva submission
-- `GET /api/leads?source_site=<dominio>` → elenco lead con array `answers`
-- `GET /api/lead-summary` → riepilogo conteggi per sito
+- `GET /api/leads?source_site=<dominio>&search=<testo>&submitted_from=<ISO>&submitted_to=<ISO>&limit=300&offset=0` → elenco lead con array `answers`
+- `GET /api/lead-summary` → riepilogo conteggi per sito (supporta gli stessi filtri di ricerca/data)
+- `GET /api/dashboard-stats` → KPI dashboard (totali, ultime 24h, top form, summary per sito) con filtri opzionali
 - `GET /api/sources` → domini consentiti
+
+## Dashboard frontend
+La dashboard (`/`) ora include:
+- filtri operativi per sorgente, testo libero e intervallo data
+- KPI globali (lead totali, ultime 24h, ultimo invio)
+- top form più inviati
+- export CSV delle lead correnti in tabella
 
 ## Esempio payload con risposte preimpostate
 ```json

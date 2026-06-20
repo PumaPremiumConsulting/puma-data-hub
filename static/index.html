@@ -18,14 +18,62 @@
       </header>
 
       <section class="controls card">
+        <div class="control-grid">
+          <label class="field">
+            Sorgente
+            <select id="sourceFilter">
+              <option value="">Tutte</option>
+            </select>
+          </label>
+          <label class="field">
+            Ricerca
+            <input id="searchInput" type="text" placeholder="Nome, email, azienda o messaggio" />
+          </label>
+          <label class="field">
+            Da (UTC)
+            <input id="fromInput" type="datetime-local" />
+          </label>
+          <label class="field">
+            A (UTC)
+            <input id="toInput" type="datetime-local" />
+          </label>
+          <label class="field">
+            Righe
+            <select id="limitSelect">
+              <option value="100">100</option>
+              <option value="300" selected>300</option>
+              <option value="600">600</option>
+              <option value="1000">1000</option>
+            </select>
+          </label>
+        </div>
         <div class="control-row">
-          <label for="sourceFilter">Filtro sorgente</label>
-          <select id="sourceFilter">
-            <option value="">Tutte</option>
-          </select>
-          <button id="refreshButton" class="secondary">Aggiorna tabella</button>
+          <button id="refreshButton" class="secondary">Aggiorna dashboard</button>
+          <button id="clearFiltersButton" class="ghost">Reset filtri</button>
+          <button id="exportCsvButton" class="secondary">Esporta CSV</button>
         </div>
         <p id="statusText" class="status">Pronto.</p>
+      </section>
+      <section class="card">
+        <h2>KPI centralizzazione</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <h3>Lead totali</h3>
+            <p id="kpiTotal" class="kpi-value">0</p>
+          </article>
+          <article class="kpi-card">
+            <h3>Lead ultime 24h</h3>
+            <p id="kpiLast24h" class="kpi-value">0</p>
+          </article>
+          <article class="kpi-card">
+            <h3>Ultimo invio</h3>
+            <p id="kpiLastSubmitted" class="kpi-value kpi-small">-</p>
+          </article>
+        </div>
+        <div class="top-forms">
+          <h3>Form più inviati</h3>
+          <ul id="topFormsList"></ul>
+        </div>
       </section>
 
       <section class="card">
